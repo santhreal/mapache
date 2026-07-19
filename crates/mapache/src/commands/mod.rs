@@ -27,7 +27,6 @@ pub mod cmd_sync;
 pub mod cmd_tui;
 pub mod cmd_unlock;
 pub mod cmd_verify;
-mod verify_sample;
 
 pub mod cleanup;
 pub mod error;
