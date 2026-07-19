@@ -966,7 +966,7 @@ fn emit_blob_corruption_json(blob_id: &ID, path: &Path, snapshot_id: &ID) {
     );
 }
 
-/// Zero percent and an empty pack list both yield zero packs.
+/// How many packs `--sample PCT%` should verify. `0%` and an empty pack list both yield 0.
 fn sample_pack_count(pack_count: usize, sample_pct: f64) -> usize {
     if pack_count == 0 || sample_pct <= 0.0 {
         return 0;
