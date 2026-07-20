@@ -164,8 +164,8 @@ pub struct CmdArgs {
     pub verify: Option<bool>,
 
     /// Maximum number of files per batch. Limits peak memory when restoring many
-    /// small files. Default: no limit (all files processed in a single batch).
-    #[clap(long)]
+    /// small files. Must be greater than 0.
+    #[clap(long, value_parser = parse_batch_size)]
     pub batch_size: Option<usize>,
 
     /// Dry run
@@ -545,4 +545,44 @@ pub(crate) async fn run_with_repo(
         }
     }
     Ok(())
+}
+
+fn parse_batch_size(s: &str) -> Result<usize, String> {
+    let n = s
+        .parse::<usize>()
+        .map_err(|_| format!("'{s}' is not a valid number"))?;
+    if n == 0 {
+        return Err("batch-size must be greater than 0".to_string());
+    }
+    Ok(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    #[command(no_binary_name = true)]
+    struct RestoreArgsParse {
+        #[command(flatten)]
+        args: CmdArgs,
+    }
+
+    #[test]
+    fn batch_size_rejects_zero() {
+        let err = RestoreArgsParse::try_parse_from(["--batch-size", "0"])
+            .expect_err("--batch-size 0 must be rejected");
+        assert!(
+            err.to_string().contains("greater than 0"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn batch_size_accepts_positive() {
+        let parsed = RestoreArgsParse::try_parse_from(["--batch-size", "100"])
+            .expect("--batch-size 100 must parse");
+        assert_eq!(parsed.args.batch_size, Some(100));
+    }
 }
