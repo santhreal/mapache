@@ -85,6 +85,10 @@ fn cache_size_mib_parser(s: &str) -> std::result::Result<f32, String> {
     if val < 0.0 {
         return Err("cache size must not be negative".to_string());
     }
+    let bytes = (val as f64) * (size::MiB as f64);
+    if !bytes.is_finite() || bytes > u64::MAX as f64 {
+        return Err("cache size is too large".to_string());
+    }
     Ok(val)
 }
 
