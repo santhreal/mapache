@@ -136,11 +136,30 @@ pub struct CmdArgs {
 
     /// Max size of internal data cache in MiB (mount mode only)
     #[cfg(all(feature = "mount", unix))]
-    #[arg(long = "cache-size-mib", default_value_t = 256.0)]
+    #[arg(long = "cache-size-mib", value_parser = cache_size_mib_parser, default_value_t = 256.0)]
     pub data_cache_size_mib: f32,
 
     #[arg(skip)]
     pub internal_password: Option<String>,
+}
+
+/// Reject non-finite / negative / byte-overflow `--cache-size-mib` (e.g. `1e20` → u64::MAX).
+#[cfg(all(feature = "mount", unix))]
+fn cache_size_mib_parser(s: &str) -> std::result::Result<f32, String> {
+    let val = s
+        .parse::<f32>()
+        .map_err(|e| format!("Invalid cache size: {e}"))?;
+    if !val.is_finite() {
+        return Err("cache size must be a finite number".to_string());
+    }
+    if val < 0.0 {
+        return Err("cache size must not be negative".to_string());
+    }
+    let bytes = (val as f64) * (size::MiB as f64);
+    if !bytes.is_finite() || bytes > u64::MAX as f64 {
+        return Err("cache size is too large".to_string());
+    }
+    Ok(val)
 }
 
 #[cfg(all(feature = "mount", unix))]
@@ -1491,5 +1510,52 @@ impl BundleScanner {
                 });
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "mount", unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_size_mib_rejects_scientific_overflow() {
+        let err = cache_size_mib_parser("1e20").expect_err("1e20 must be rejected");
+        assert!(
+            err.contains("too large"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn cache_size_mib_rejects_non_finite() {
+        assert!(
+            cache_size_mib_parser("inf")
+                .unwrap_err()
+                .contains("finite"),
+            "inf must be rejected"
+        );
+        assert!(
+            cache_size_mib_parser("nan")
+                .unwrap_err()
+                .contains("finite"),
+            "nan must be rejected"
+        );
+    }
+
+    #[test]
+    fn cache_size_mib_rejects_negative() {
+        assert!(
+            cache_size_mib_parser("-1")
+                .unwrap_err()
+                .contains("negative"),
+            "negative must be rejected"
+        );
+    }
+
+    #[test]
+    fn cache_size_mib_accepts_default_range() {
+        assert_eq!(cache_size_mib_parser("256").unwrap(), 256.0);
+        assert_eq!(cache_size_mib_parser("1").unwrap(), 1.0);
+        assert_eq!(cache_size_mib_parser("0").unwrap(), 0.0);
     }
 }
