@@ -4,7 +4,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     commands,
-    common::error::{MapacheError, Result},
+    common::{
+        defaults::{MAX_CONFIGURABLE_PACK_SIZE_MIB, MIN_CONFIGURABLE_PACK_SIZE_MIB},
+        error::{MapacheError, Result},
+    },
     fs,
 };
 
@@ -287,6 +290,16 @@ pub fn load_config(path: &PathBuf) -> Result<MapacheConfig> {
         }
     }
 
+    // Match CLI pack_size_parser so TOML cannot bypass the MiB range (oversized packs hit u32 Integrity mid-run).
+    if let Some(global) = &config.global
+        && let Some(val) = global.pack_size_mib
+        && !(MIN_CONFIGURABLE_PACK_SIZE_MIB..=MAX_CONFIGURABLE_PACK_SIZE_MIB).contains(&val)
+    {
+        return Err(MapacheError::Config(format!(
+            "global.pack-size-mib must be between {MIN_CONFIGURABLE_PACK_SIZE_MIB} and {MAX_CONFIGURABLE_PACK_SIZE_MIB} MiB"
+        )));
+    }
+
     Ok(config)
 }
 
@@ -459,5 +472,61 @@ mod tests {
             ),
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn pack_size_mib_above_max_is_rejected() {
+        let dir = std::env::temp_dir().join(format!(
+            "mapache-pack-size-above-max-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("mapache.toml");
+        // CLI rejects --pack-size 8000; TOML must not bypass that check.
+        std::fs::write(&path, "[global]\npack-size-mib = 8000\n").unwrap();
+        let err = load_config(&path).expect_err("pack-size-mib 8000 must be rejected");
+        let _ = std::fs::remove_dir_all(&dir);
+        match err {
+            MapacheError::Config(msg) => assert!(
+                msg.contains("pack-size-mib must be between"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pack_size_mib_below_min_is_rejected() {
+        let dir = std::env::temp_dir().join(format!(
+            "mapache-pack-size-below-min-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("mapache.toml");
+        // CLI rejects --pack-size 0; fractional below MIN also invalid.
+        std::fs::write(&path, "[global]\npack-size-mib = 0.5\n").unwrap();
+        let err = load_config(&path).expect_err("pack-size-mib 0.5 must be rejected");
+        let _ = std::fs::remove_dir_all(&dir);
+        match err {
+            MapacheError::Config(msg) => assert!(
+                msg.contains("pack-size-mib must be between"),
+                "unexpected message: {msg}"
+            ),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pack_size_mib_in_range_is_accepted() {
+        let dir = std::env::temp_dir().join(format!(
+            "mapache-pack-size-in-range-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("mapache.toml");
+        std::fs::write(&path, "[global]\npack-size-mib = 16\n").unwrap();
+        let cfg = load_config(&path).expect("pack-size-mib 16 must load");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(cfg.global.unwrap().pack_size_mib, Some(16.0));
     }
 }
