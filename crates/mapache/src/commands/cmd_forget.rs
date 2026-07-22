@@ -86,7 +86,8 @@ pub struct CmdArgs {
     pub keep_last: Option<usize>,
 
     /// Keep snapshots within a specified duration (e.g., '1d', '2w', '3m', '4y', '5h', '6s').
-    #[arg(long, value_parser = utils::parse_duration_string, group = "retention_rules")]
+    /// Duration must be greater than 0.
+    #[arg(long, value_parser = parse_keep_within, group = "retention_rules")]
     #[serde(deserialize_with = "deserialize_duration_opt")]
     pub keep_within: Option<chrono::Duration>,
 
@@ -198,8 +199,17 @@ where
     D: serde::Deserializer<'de>,
 {
     let opt = Option::<String>::deserialize(deserializer)?;
-    opt.map(|s| utils::parse_duration_string(&s).map_err(serde::de::Error::custom))
+    opt.map(|s| parse_keep_within(&s).map_err(serde::de::Error::custom))
         .transpose()
+}
+
+/// Parse `--keep-within` / TOML `keep-within`; reject 0 (keeps nothing → forgets all).
+fn parse_keep_within(s: &str) -> std::result::Result<chrono::Duration, String> {
+    let d = utils::parse_duration_string(s).map_err(|e| e.to_string())?;
+    if d.is_zero() {
+        return Err("keep-within must be greater than 0".to_string());
+    }
+    Ok(d)
 }
 
 fn deserialize_retention_opt<'de, D>(
@@ -537,5 +547,36 @@ mod tests {
         let args = CmdArgs::try_parse_from(["forget", "--keep-last", "5"])
             .expect("--keep-last 5 must parse");
         assert_eq!(args.keep_last, Some(5));
+    }
+
+    // `--keep-within 0s` must be rejected. Duration "0s" parses to zero, and
+    // KeepWithin(0) keeps nothing newer than now, so every snapshot is forgotten.
+    #[test]
+    fn keep_within_rejects_zero() {
+        let err = CmdArgs::try_parse_from(["forget", "--keep-within", "0s"])
+            .expect_err("--keep-within 0s must be rejected");
+        assert!(
+            err.to_string().contains("greater than 0"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    #[test]
+    fn keep_within_accepts_positive() {
+        let args = CmdArgs::try_parse_from(["forget", "--keep-within", "1d"])
+            .expect("--keep-within 1d must parse");
+        assert_eq!(args.keep_within, Some(chrono::Duration::days(1)));
+    }
+
+    #[test]
+    fn keep_within_toml_rejects_zero() {
+        let toml = r#"
+            keep-within = "0s"
+        "#;
+        let err = toml::from_str::<CmdArgs>(toml).expect_err("TOML keep-within 0s must be rejected");
+        assert!(
+            err.to_string().contains("greater than 0"),
+            "unexpected error message: {err}"
+        );
     }
 }
